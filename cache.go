@@ -2,6 +2,7 @@ package cache
 
 import (
 	"container/list"
+	"container/ring"
 	"errors"
 )
 
@@ -21,6 +22,8 @@ type PolicyType int
 const (
 	FIFO PolicyType = 1 << iota
 	LRU
+	LFU
+	CLOCK
 )
 
 // Victim runs the policy algorithm and elects a CacheKey , called victim, for removal;
@@ -40,6 +43,10 @@ func GetCachePolicy(policy PolicyType) CachePolicy {
 		return NewFIFOPolicy()
 	case LRU:
 		return NewLRUPolicy()
+	case LFU:
+		return NewLFUPolicy()
+	case CLOCK:
+		return NewCLOCKPolicy()
 	default:
 		return NewFIFOPolicy()
 	}
@@ -75,6 +82,7 @@ func NewCache(maxSize int, policy PolicyType) *Cache {
 
 // Replacement Policies
 
+// FIFO
 type FIFOPolicy struct {
 	list    *list.List
 	keyNode map[CacheKey]*list.Element
@@ -110,6 +118,7 @@ func (p *FIFOPolicy) Remove(key CacheKey) {
 
 func (p *FIFOPolicy) Access(key CacheKey) {}
 
+// LRU
 type LRUPolicy struct {
 	list    *list.List
 	keyNode map[CacheKey]*list.Element
@@ -146,4 +155,149 @@ func (p *LRUPolicy) Remove(key CacheKey) {
 func (p *LRUPolicy) Access(key CacheKey) {
 	p.Remove(key)
 	p.Add(key)
+}
+
+// CLOCK
+type ClockPolicy struct {
+	list      *CircularList
+	keyNode   map[CacheKey]*ring.Ring
+	clockHand *ring.Ring
+}
+type ClockItem struct {
+	key CacheKey
+	bit bool
+}
+
+func NewCLOCKPolicy() CachePolicy {
+	policy := &ClockPolicy{}
+	policy.keyNode = make(map[CacheKey]*ring.Ring)
+	policy.list = &CircularList{}
+	policy.clockHand = nil
+	return policy
+}
+
+func (p *ClockPolicy) Victim() CacheKey {
+	var victimKey CacheKey
+	var nodeItem *ClockItem
+	for {
+		currentNode := (*p.clockHand)
+		nodeItem = currentNode.Value.(*ClockItem)
+		if nodeItem.bit {
+			nodeItem.bit = false
+			currentNode.Value = nodeItem
+			p.clockHand = currentNode.Next()
+		} else {
+			victimKey = nodeItem.key
+			p.list.Move(p.clockHand.Prev())
+			p.clockHand = nil
+			p.list.Remove(&currentNode)
+			delete(p.keyNode, victimKey)
+			return victimKey
+		}
+	}
+}
+
+func (p *ClockPolicy) Add(key CacheKey) {
+	node := p.list.Append(&ClockItem{key, true})
+	if p.clockHand == nil {
+		p.clockHand = node
+	}
+	p.keyNode[key] = node
+}
+
+func (p *ClockPolicy) Remove(key CacheKey) {
+	node, ok := p.keyNode[key]
+	if !ok {
+		return
+	}
+
+	if p.clockHand == node {
+		p.clockHand = p.clockHand.Prev()
+	}
+	p.list.Remove(node)
+	delete(p.keyNode, key)
+}
+
+func (p *ClockPolicy) Access(key CacheKey) {
+	node, ok := p.keyNode[key]
+	if !ok {
+		return
+	}
+	node.Value = &ClockItem{key, true}
+}
+
+// LFU
+
+type Frequency int
+
+type LFUItem struct {
+	frequency Frequency
+	key       CacheKey
+}
+
+type LFUPolicy struct {
+	freqList     map[Frequency]*list.List
+	keyNode      map[CacheKey]*list.Element
+	minFrequency Frequency
+}
+
+func NewLFUPolicy() CachePolicy {
+	policy := &LFUPolicy{}
+	policy.keyNode = make(map[CacheKey]*list.Element)
+	policy.freqList = make(map[Frequency]*list.List)
+	policy.minFrequency = 1
+	return policy
+}
+
+func (p *LFUPolicy) Victim() CacheKey {
+	fList := p.freqList[p.minFrequency]
+	element := fList.Back()
+	fList.Remove(element)
+	delete(p.keyNode, element.Value.(LFUItem).key)
+	return element.Value.(LFUItem).key
+}
+
+func (p *LFUPolicy) Add(key CacheKey) {
+	_, ok := p.freqList[1]
+	if !ok {
+		p.freqList[1] = list.New()
+	}
+
+	node := p.freqList[1].PushFront(LFUItem{1, key})
+	p.keyNode[key] = node
+	p.minFrequency = 1
+}
+
+func (p *LFUPolicy) Remove(key CacheKey) {
+	p.remove(key)
+}
+
+func (p *LFUPolicy) Access(key CacheKey) {
+	node := p.remove(key)
+
+	frequency := node.Value.(LFUItem).frequency
+	_, ok := p.freqList[frequency+1]
+	if !ok {
+		p.freqList[frequency+1] = list.New()
+	}
+
+	node = p.freqList[frequency+1].PushFront(LFUItem{frequency + 1, key})
+	p.keyNode[key] = node
+}
+
+func (p *LFUPolicy) remove(key CacheKey) *list.Element {
+	node := p.keyNode[key]
+	frequency := node.Value.(LFUItem).frequency
+
+	p.freqList[frequency].Remove(node)
+	delete(p.keyNode, key)
+
+	if p.freqList[frequency].Len() == 0 {
+		delete(p.freqList, frequency)
+		if p.minFrequency == frequency {
+			p.minFrequency++
+		}
+	}
+
+	return node
 }

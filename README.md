@@ -6,6 +6,8 @@ Cache replacement policy implemented by go
 
 * FIFO
 * LRU
+* LFU
+* CLOCK
 
 ## Testing
 

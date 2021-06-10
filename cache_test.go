@@ -70,3 +70,61 @@ func TestLRUPolicy(t *testing.T) {
 	cache := NewCache(5, LRU)
 	test(t, cache, testCase)
 }
+
+func TestLFUPolicy(t *testing.T) {
+	var cache *Cache
+	var testCase [][]interface{}
+
+	testCase = [][]interface{}{
+		{"Put", "1", "1"},
+		{"Put", "2", "2"},
+		{"Get", "1", "1"},
+		{"Put", "3", "3"},
+		{"Get", "2", nil},
+	}
+
+	cache = NewCache(2, LFU)
+	test(t, cache, testCase)
+
+	testCase = [][]interface{}{
+		{"Put", "1", "1"},
+		{"Put", "2", "2"},
+		{"Get", "1", "1"},
+		{"Put", "3", "3"},
+		{"Get", "2", "2"},
+		{"Put", "4", "4"},
+		{"Put", "5", "5"},
+		{"Get", "3", "3"},
+		{"Get", "1", "1"},
+		{"Put", "6", "6"},
+		{"Get", "4", nil},
+	}
+
+	cache = NewCache(5, LFU)
+	test(t, cache, testCase)
+
+}
+
+func TestClockPolicy(t *testing.T) {
+	testCase := [][]interface{}{
+		{"Put", "1", "1"},
+		{"Put", "2", "2"},
+		{"Put", "3", "3"},
+		{"Put", "4", "4"},
+		{"Put", "5", "5"},
+		{"Get", "1", "1"},
+		{"Get", "2", "2"},
+		{"Get", "3", "3"},
+		{"Get", "4", "4"},
+		{"Get", "5", "5"},
+		{"Put", "6", "6"}, // 1 is evicted
+		{"Get", "1", nil},
+		{"Get", "2", "2"},
+		{"Get", "3", "3"},
+		{"Put", "7", "7"}, // 4 is evicted
+		{"Get", "4", nil},
+	}
+
+	cache := NewCache(5, CLOCK)
+	test(t, cache, testCase)
+}
